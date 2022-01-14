@@ -14,7 +14,7 @@
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Connor Claypool");
-MODULE_DESCRIPTION("A networked GPIO driver");
+MODULE_DESCRIPTION("A networked GPIO driver for cloud-based VHDL simulation");
 MODULE_VERSION("0.1");
 
 #define PORT 12345
@@ -45,22 +45,6 @@ struct GPIOEvent {
     uint8_t value;
 };
 typedef struct GPIOEvent GPIOEvent_t;
-
-struct GPIOInfo {
-    // bit field for pin values
-    uint8_t pin_values;
-    // bit field for whether values have changed
-    uint8_t values_changed;
-};
-typedef struct GPIOInfo GPIOInfo_t;
-
-struct GPIOEventQueue {
-    // event
-    GPIOEvent_t ev;
-    // list head
-    struct list_head list;
-};
-typedef struct GPIOEventQueue GPIOEventQueue_t;
 
 // socket for sending and receiving messages
 struct socket *conn = NULL;
@@ -113,15 +97,12 @@ int gpio_events_push(GPIOEvent_t ev)
     if (gpio_events_full()) {
         return -1;
     }
-    // pr_info("Writing at: %d\n", gpio_event_write);
     gpio_events[gpio_event_write] = ev;
     gpio_event_write += 1;
     if (gpio_event_write >= GPIO_EVENT_QUEUE_SIZE) {
         gpio_event_write = 0;
     }
-    // pr_info("New write value: %d\n", gpio_event_write);
     gpio_events_items += 1;
-    // pr_info("Write: queue size %d\n", gpio_events_items);
     return 0;
 }
 
@@ -129,15 +110,12 @@ int gpio_events_push(GPIOEvent_t ev)
 GPIOEvent_t gpio_events_pop(void)
 {
     GPIOEvent_t ev;
-    // pr_info("Reading at: %d\n", gpio_event_read);
     ev = gpio_events[gpio_event_read];
     gpio_event_read += 1;
     if (gpio_event_read >= GPIO_EVENT_QUEUE_SIZE) {
         gpio_event_read = 0;
     }
-    // pr_info("New read value: %d\n", gpio_event_read);
     gpio_events_items -= 1;
-    // pr_info("Read: queue size %d\n", gpio_events_items);
     return ev;
 }
 
@@ -225,16 +203,12 @@ static irqreturn_t gpio_irq_handler(int irq, void *dev_id)
 
     if (!found) {
         pr_info("Error: unknown GPIO interrupt!\n");
-        //spin_unlock_irqrestore(&gpio_input_info_lock, flags);
         return IRQ_HANDLED;
     }
-
-    //pr_info("Before debounce GPIO Interrupt: %d. Rising edge: %d\n", gpio_number, rising);
 
     // debounce
     diff = jiffies - last_interrupts[input_number];
     if (diff < 5) {
-        // spin_unlock_irqrestore(&gpio_input_info_lock, flags);
         return IRQ_HANDLED;
     }
     last_interrupts[input_number] = jiffies;
@@ -249,11 +223,10 @@ static irqreturn_t gpio_irq_handler(int irq, void *dev_id)
     if (err < 0) {
         pr_info("GPIO event queue full! Item not added.\n");
     }
-    //pr_info("Queueing GPIO Interrupt: %d. Input number: %d, Rising edge: %d\n", gpio_number, input_number, rising);
-    // signal input processing thread to wake up
-    complete(&gpio_event_added);
     // release lock
     spin_unlock_irqrestore(&gpio_events_lock, flags);
+    // signal input processing thread to wake up
+    complete(&gpio_event_added);
 
     return IRQ_HANDLED;
 }
@@ -269,7 +242,6 @@ char *generate_gpio_label(int gpio_number, bool input, int label_index)
         gpio_labels[label_index] = gpio_label;
         memset(gpio_label, 0, GPIO_LABEL_LEN);
         snprintf(gpio_label, GPIO_LABEL_LEN, "GPIO_%s%d", direction, gpio_number);
-        //pr_info("GPIO label: %s\n", gpio_label);
     }
 
     return gpio_label;
@@ -306,7 +278,6 @@ int setup_gpio_pin(int i, bool input, bool rising)
         pr_info("Error allocating GPIO pin %d: %d\n", gpio_number, err);
         return -1;
     }
-    //pr_info("Saving allocated GPIO pin %d at index %d\n", gpio_number, offset + i);
     allocated_gpio_pins[offset + i] = gpio_number;
     // configure pin
     if (input) {
@@ -326,7 +297,6 @@ int setup_gpio_pin(int i, bool input, bool rising)
     if (input) {
         gpio_irq_flags = rising ? IRQF_TRIGGER_RISING : IRQF_TRIGGER_FALLING;
         irq_number = gpio_to_irq(gpio_number);
-        //pr_info("Registering %d edge interrupt %d for GPIO pin %d\n", rising, irq_number, gpio_number);
         err = request_irq(
             irq_number,
             (void*)gpio_irq_handler,
@@ -337,7 +307,6 @@ int setup_gpio_pin(int i, bool input, bool rising)
             pr_err("Error registering IRQ for GPIO pin %d\n", gpio_number);
             return -1;
         }
-        //pr_info("Saving IRQ number %d at index %d\n", irq_number, offset + i);
         allocated_irqs[offset + i] = irq_number;
     }
 
@@ -347,8 +316,6 @@ int setup_gpio_pin(int i, bool input, bool rising)
 // initialize GPIO pins
 int init_gpio(void)
 {
-    // TODO: call cleanup on error
-
     int i;
 
     // allocate GPIO output pins
@@ -405,13 +372,17 @@ void free_gpio_pins(void)
 }
 
 // attempt to receive a given number of bytes at the given offset
-int receive_bytes_at_offset(int bytes, int offset, uint8_t *buffer, int flags)
+int receive_bytes_at_offset(int bytes, int offset, uint8_t *buffer, int len, int flags)
 {
     // return value
     int ret;
     // message and kvec for message data
     struct msghdr msg;
     struct kvec msg_data_vec;
+    // check bounds
+    if (offset + bytes > len) {
+        return -1;
+    }
     // zero structures
     memset(&msg, 0, sizeof(msg));
     memset(&msg_data_vec, 0, sizeof(msg_data_vec));
@@ -430,13 +401,17 @@ int receive_bytes_at_offset(int bytes, int offset, uint8_t *buffer, int flags)
 }
 
 // attempt to send the given number of bytes at the given offset
-int send_bytes_at_offset(int bytes, int offset, uint8_t *buffer, int flags)
+int send_bytes_at_offset(int bytes, int offset, uint8_t *buffer, int len, int flags)
 {
     // return value
     int ret;
     // message and kvec for message data
     struct msghdr msg;
     struct kvec msg_data_vec;
+    // check bounds
+    if (offset + bytes > len) {
+        return -1;
+    }
     // zero structures
     memset(&msg, 0, sizeof(msg));
     memset(&msg_data_vec, 0, sizeof(msg_data_vec));
@@ -469,7 +444,7 @@ int send_message(int pin, int value)
 
     do
     {
-        ret = send_bytes_at_offset(MSG_LEN - bytes_sent, bytes_sent, msg, MSG_WAITALL);
+        ret = send_bytes_at_offset(MSG_LEN - bytes_sent, bytes_sent, msg, MSG_LEN, MSG_WAITALL);
         if (ret < 0) {
             return ret;
         } else if (ret == 0) {
@@ -532,16 +507,19 @@ int send_messages(void *unused)
 }
 
 // process a received message
-int process_message(uint8_t *msg)
+int process_message(uint8_t *msg, int len)
 {
     int gpio_number;
     int value;
-
+    // check bounds
+    if (len < MSG_LEN) {
+        return -1;
+    }
+    // decode GPIO number and value
     gpio_number = GPIO_OUTPUT_START + msg[MSG_PIN_IDX];
     value = msg[MSG_VALUE_IDX];
-    pr_info("GPIO pin: %d, value: %d\n", gpio_number, value);
+    // set GPIO pin value
     gpio_set_value(gpio_number, value);
-
     return 0;
 }
 
@@ -567,18 +545,22 @@ int receive_messages(void *unused)
             if (kthread_should_stop()) {
                 return 0;
             }
-            // attempt to receive required number of bytes
-            ret = receive_bytes_at_offset(MSG_LEN - bytes_received, bytes_received, msg_data, MSG_WAITALL);
+            // attempt to receive required number of bytes:
+            // buffer (msg_data) is MSG_LEN bytes long
+            // no. of bytes to receive is always less than MSG_LEN
+            // offset + no. of bytes to receive always equals MSG_LEN, so buffer never overflows
+            ret = receive_bytes_at_offset(MSG_LEN - bytes_received, bytes_received, msg_data, MSG_LEN, MSG_WAITALL);
             //pr_info("Received bytes: %d\n", ret);
             if (ret < 0) {
                 // handle errors    
                 pr_info("Error receiving bytes: %d\n", ret);
             } else {
+                // ret is 0 or greater, bytes_received is never made negative
                 bytes_received += ret;
             }
         } while (bytes_received < MSG_LEN);
         // process and handle message
-        process_message(msg_data);
+        process_message(msg_data, MSG_LEN);
     }
 
     return 0;
@@ -591,7 +573,6 @@ int connect_to_server(void *unused)
     int ret;
     struct sockaddr_in saddr;
     uint8_t ip_octets[4] = {127,0,0,1};
-    // uint8_t ip_octets[4] = {192,168,1,106};
 
     // set up address/port to connect to
     memset(&saddr, 0, sizeof(saddr));
@@ -614,8 +595,6 @@ int connect_to_server(void *unused)
 
     // launch kthread for receiving messages
     receive_messages_kthread = kthread_run(receive_messages, NULL, "netgpio-recv");
-    // launch kthread for enqueuing events
-    //enqueue_gpio_events_kthread = kthread_run(enqueue_gpio_events, NULL, "netgpio-enqueue");
     // launch kthread for sending messages
     send_messages_kthread = kthread_run(send_messages, NULL, "netgpio-send");
 
@@ -661,7 +640,7 @@ static void __exit end_netgpio(void)
     // close socket, causing all calls to recvmsg 
     // on the socket to return 0 immediately
     if (conn != NULL) {
-        kernel_sock_shutdown(conn, SHUT_RDWR);   
+        kernel_sock_shutdown(conn, SHUT_RDWR);
     }
     // stop the receiver thread once it wakes up,
     // which it will immediately now the socket is closed
