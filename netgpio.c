@@ -96,19 +96,19 @@ int gpio_events_items = 0;
 DEFINE_SPINLOCK(gpio_events_lock);
 
 // check if queue is empty
-bool gpio_events_empty(void)
+static bool gpio_events_empty(void)
 {
     return (gpio_events_items == 0);
 }
 
 // check if queue is full
-bool gpio_events_full(void)
+static bool gpio_events_full(void)
 {
     return (gpio_events_items == GPIO_EVENT_QUEUE_SIZE);
 }
 
 // push a GPIO event onto the queue
-int gpio_events_push(GPIOEvent_t ev)
+static int gpio_events_push(GPIOEvent_t ev)
 {
     if (gpio_events_full()) {
         return -1;
@@ -123,7 +123,7 @@ int gpio_events_push(GPIOEvent_t ev)
 }
 
 // pop a GPIO event off the queue. Assumes the queue is not empty!
-GPIOEvent_t gpio_events_pop(void)
+static GPIOEvent_t gpio_events_pop(void)
 {
     GPIOEvent_t ev;
     ev = gpio_events[gpio_event_read];
@@ -136,7 +136,7 @@ GPIOEvent_t gpio_events_pop(void)
 }
 
 // construct a 32-bit IPv4 address from four octets
-uint32_t format_ip_address(uint8_t *octets)
+static uint32_t format_ip_address(uint8_t *octets)
 {
     uint32_t address = 0;
     int i;
@@ -147,7 +147,7 @@ uint32_t format_ip_address(uint8_t *octets)
 }
 
 // initialize socket
-int init_socket(void)
+static int init_socket(void)
 {
     int ret;
 
@@ -160,7 +160,7 @@ int init_socket(void)
 }
 
 // calculate delay for connection attempts
-int calculate_delay(int iteration)
+static int calculate_delay(int iteration)
 {
     if (iteration < 100) {
         return 100;
@@ -168,24 +168,6 @@ int calculate_delay(int iteration)
         return 1000;
     }
     return 2500;
-}
-
-// convert GPIO to sequence number
-int gpio_to_seq(int gpio_number)
-{
-    if (gpio_number >= GPIO_OUTPUT_START && gpio_number < GPIO_OUTPUT_END)
-    {
-        return GPIO_OUTPUT_OFFSET + (gpio_number - GPIO_OUTPUT_START);
-    }
-    else if (gpio_number >= GPIO_INPUT_RISING_START && gpio_number < GPIO_INPUT_RISING_END)
-    {
-        return GPIO_INPUT_RISING_OFFSET + (gpio_number - GPIO_INPUT_RISING_START);
-    }
-    else if (gpio_number >= GPIO_INPUT_FALLING_START && gpio_number < GPIO_INPUT_FALLING_END)
-    {
-        return GPIO_INPUT_FALLING_OFFSET + (gpio_number - GPIO_INPUT_FALLING_START);
-    }
-    return -1;
 }
 
 // GPIO interrupt handler
@@ -248,7 +230,7 @@ static irqreturn_t gpio_irq_handler(int irq, void *dev_id)
 }
 
 // generate sysfs label for GPIO pins
-char *generate_gpio_label(int gpio_number, bool input, int label_index)
+static char *generate_gpio_label(int gpio_number, bool input, int label_index)
 {
     char *gpio_label;
     const char *direction = input ? "IN" : "OUT";
@@ -264,7 +246,7 @@ char *generate_gpio_label(int gpio_number, bool input, int label_index)
 }
 
 // allocate and configure a GPIO input pin
-int setup_gpio_pin(int i, bool input, bool rising)
+static int setup_gpio_pin(int i, bool input, bool rising)
 {
     int err;
     int offset;
@@ -330,7 +312,7 @@ int setup_gpio_pin(int i, bool input, bool rising)
 }
 
 // initialize GPIO pins
-int init_gpio(void)
+static int init_gpio(void)
 {
     int i;
 
@@ -357,7 +339,7 @@ int init_gpio(void)
 }
 
 // release allocated GPIO pins
-void free_gpio_pins(void)
+static void free_gpio_pins(void)
 {
     int i;
     int gpio_number;
@@ -388,7 +370,7 @@ void free_gpio_pins(void)
 }
 
 // attempt to receive a given number of bytes at the given offset
-int receive_bytes_at_offset(int bytes, int offset, uint8_t *buffer, int len, int flags)
+static int receive_bytes_at_offset(int bytes, int offset, uint8_t *buffer, int len, int flags)
 {
     // return value
     int ret;
@@ -417,7 +399,7 @@ int receive_bytes_at_offset(int bytes, int offset, uint8_t *buffer, int len, int
 }
 
 // attempt to send the given number of bytes at the given offset
-int send_bytes_at_offset(int bytes, int offset, uint8_t *buffer, int len, int flags)
+static int send_bytes_at_offset(int bytes, int offset, uint8_t *buffer, int len, int flags)
 {
     // return value
     int ret;
@@ -445,7 +427,7 @@ int send_bytes_at_offset(int bytes, int offset, uint8_t *buffer, int len, int fl
     return ret;
 }
 
-int send_message(int pin, int value)
+static int send_message(int pin, int value)
 {
     // return value
     int ret;
@@ -475,7 +457,7 @@ int send_message(int pin, int value)
 }
 
 // kthread function to process gpio events from queue and send messages
-int send_messages(void *unused)
+static int send_messages(void *unused)
 {
     int ret;
     unsigned long flags;
@@ -523,7 +505,7 @@ int send_messages(void *unused)
 }
 
 // process a received message
-int process_message(uint8_t *msg, int len)
+static int process_message(uint8_t *msg, int len)
 {
     int gpio_number;
     int value;
@@ -540,7 +522,7 @@ int process_message(uint8_t *msg, int len)
 }
 
 // kthread function to receive network messages
-int receive_messages(void *unused)
+static int receive_messages(void *unused)
 {
     // return value
     int ret;
@@ -583,7 +565,7 @@ int receive_messages(void *unused)
 }
 
 // kthread function to connect to server on initialized socket
-int connect_to_server(void *unused)
+static int connect_to_server(void *unused)
 {
     int i;
     int ret;
